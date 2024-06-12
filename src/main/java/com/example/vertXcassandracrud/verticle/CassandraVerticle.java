@@ -92,45 +92,36 @@ public class CassandraVerticle extends AbstractVerticle {
 
     private void getProducts(RoutingContext context) {
         String filter = context.request().getParam("filter");
-
-        StringBuilder queryBuilder = new StringBuilder("SELECT * FROM products");
-        JsonArray params = new JsonArray();
-
-        // Check if there's a filter
-        if (filter != null && !filter.isEmpty()) {
-            if (isNumeric(filter)) {
-                // If the filter is a number, filter by retail_price
-                queryBuilder.append(" WHERE retail_price = ?");
-                params.add(Double.parseDouble(filter));
-            } else {
-                // If the filter is not a number, filter by product_name
-                queryBuilder.append(" WHERE product_name = ?");
-                params.add(filter);
-            }
-        }
-        if (queryBuilder.toString().contains("WHERE")) {
-            queryBuilder.append(" ALLOW FILTERING");
-        }
-
-        String finalQuery = queryBuilder.toString();
-        List<Object> finalParams = params.getList();
-
-        System.out.println("Executing query: " + finalQuery);
-        System.out.println("With parameters: " + finalParams);
-
-        SimpleStatement statement = SimpleStatement.builder(finalQuery)
-                .addPositionalValues(finalParams)
-                .build();
-
-        cassandraClient.executeWithFullFetch(statement).onComplete(ar -> {
+        cassandraClient.executeWithFullFetch("SELECT * FROM products ALLOW FILTERING").onComplete(ar -> {
             if (ar.succeeded()) {
                 JsonArray products = new JsonArray();
                 ar.result().forEach(row -> {
-                    JsonObject product = new JsonObject()
-                            .put("product_id", row.getUuid("product_id"))
-                            .put("product_name", row.getString("product_name"))
-                            .put("retail_price", row.getDouble("retail_price"));
-                    products.add(product);
+                    String productName = row.getString("product_name");
+                    double retailPrice = row.getDouble("retail_price");
+
+                    // Filter logic based on the filter string
+                    boolean matches = false;
+                    if (filter == null || filter.isEmpty()) {
+                        matches = true;
+                    } else {
+                        String lowerCaseFilter = filter.toLowerCase();
+                        if (productName.toLowerCase().startsWith(lowerCaseFilter)) {
+                            matches = true;
+                        } else if (isNumeric(filter)) {
+                            String retailPriceStr = String.valueOf(retailPrice);
+                            if (retailPriceStr.startsWith(filter)) {
+                                matches = true;
+                            }
+                        }
+                    }
+
+                    if (matches) {
+                        JsonObject product = new JsonObject()
+                                .put("product_id", row.getUuid("product_id"))
+                                .put("product_name", productName)
+                                .put("retail_price", retailPrice);
+                        products.add(product);
+                    }
                 });
                 JsonObject responseJson = new JsonObject().put("products", products);
                 context.response()
